@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detección de Hotspots en Imágenes Térmicas</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            color: #343a40;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            display: flex;
+            flex-direction: row;
+        }
+        #sidebar {
+            flex: 1;
+            padding: 20px;
+        }
+        #main-content {
+            flex: 2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        #image-container {
+            position: relative;
+            border: 2px solid #dee2e6;
+            background-color: #ffffff;
+            max-width: 800px;
+        }
+        #thermalImage {
+            width: 100%;
+        }
+        .rectangle {
+            border: 2px solid red;
+            position: absolute;
+        }
+        .instructions {
+            margin: 20px 0;
+            font-size: 1.2em;
+        }
+        .label-input {
+            margin-bottom: 10px;
+        }
+        .label-input input {
+            width: calc(100% - 32px);
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .label-input button {
+            display: inline-block;
+        }
+        #labelList select {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="sidebar">
+            <h1>Detección de Hotspots</h1>
+            <div class="instructions">
+                <p>1. Cargar una imagen.</p>
+                <p>2. Dibujar cuadros alrededor de los hotspots.</p>
+                <p>3. Guardar las selecciones.</p>
+            </div>
+            <div class="label-input">
+                <input type="text" id="label-class" placeholder="Clase (por defecto: hotspot)">
+                <button id="addLabel" class="btn btn-secondary">Agregar Clase</button>
+            </div>
+            <div>
+                <select id="label-select" class="form-control">
+                    <option value="hotspot">hotspot</option>
+                </select>
+            </div>
+            <div>
+                <button id="loadImage" class="btn btn-primary">Cargar Imagen</button>
+                <button id="saveLabels" class="btn btn-success">Guardar Etiquetas</button>
+                <button id="noObjects" class="btn btn-warning">Sin Objetos para Etiquetar</button>
+            </div>
+        </div>
+        <div id="main-content">
+            <div id="image-container">
+                <img id="thermalImage" src="" alt="Thermal Image">
+                <div id="rectangles"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let startX, startY, endX, endY, rect;
+        const rectangles = document.getElementById('rectangles');
+        const img = document.getElementById('thermalImage');
+        let labels = [];
+        let drawing = false;
+        let noObjects = false;
+
+        document.getElementById('loadImage').addEventListener('click', () => {
+            fetch('/get_image')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.image_path) {
+                        img.src = data.image_path;
+                        img.dataset.imageIdx = data.image_idx;
+                        img.dataset.originalImagePath = data.original_image_path;
+                        rectangles.innerHTML = '';
+                        labels = [];
+                        noObjects = false;
+                    } else {
+                        alert('No hay más imágenes disponibles.');
+                    }
+                });
+        });
+
+        img.addEventListener('mousedown', (event) => {
+            if (noObjects) return;
+
+            if (!drawing) {
+                startX = event.clientX - img.getBoundingClientRect().left;
+                startY = event.clientY - img.getBoundingClientRect().top;
+
+                rect = document.createElement('div');
+                rect.className = 'rectangle';
+                rect.style.left = startX + 'px';
+                rect.style.top = startY + 'px';
+                rectangles.appendChild(rect);
+
+                drawing = true;
+            } else {
+                drawing = false;
+            }
+        });
+
+        img.addEventListener('mousemove', (event) => {
+            if (drawing) {
+                endX = event.clientX - img.getBoundingClientRect().left;
+                endY = event.clientY - img.getBoundingClientRect().top;
+
+                rect.style.width = Math.abs(endX - startX) + 'px';
+                rect.style.height = Math.abs(endY - startY) + 'px';
+                rect.style.left = Math.min(startX, endX) + 'px';
+                rect.style.top = Math.min(startY, endY) + 'px';
+            }
+        });
+
+        img.addEventListener('mouseup', (event) => {
+            if (drawing) {
+                endX = event.clientX - img.getBoundingClientRect().left;
+                endY = event.clientY - img.getBoundingClientRect().top;
+
+                rect.style.width = Math.abs(endX - startX) + 'px';
+                rect.style.height = Math.abs(endY - startY) + 'px';
+                rect.style.left = Math.min(startX, endX) + 'px';
+                rect.style.top = Math.min(startY, endY) + 'px';
+
+                const labelClass = document.getElementById('label-select').value;
+
+                labels.push({
+                    x: parseInt(rect.style.left),
+                    y: parseInt(rect.style.top),
+                    width: parseInt(rect.style.width),
+                    height: parseInt(rect.style.height),
+                    class: labelClass
+                });
+
+                drawing = false;
+            }
+        });
+
+        document.getElementById('saveLabels').addEventListener('click', () => {
+            const imageIdx = img.dataset.imageIdx;
+            const originalImagePath = img.dataset.originalImagePath;
+
+            fetch('/save_hotspot', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    image_idx: imageIdx,
+                    original_image_path: originalImagePath,
+                    labels: labels
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('Etiquetas guardadas');
+                    document.getElementById('loadImage').click(); // Cargar la siguiente imagen
+                }
+            });
+        });
+
+        document.getElementById('addLabel').addEventListener('click', () => {
+            const labelClass = document.getElementById('label-class').value || 'hotspot';
+            const labelSelect = document.getElementById('label-select');
+
+            const option = document.createElement('option');
+            option.value = labelClass;
+            option.textContent = labelClass;
+            labelSelect.appendChild(option);
+
+            document.getElementById('label-class').value = '';
+        });
+
+        document.getElementById('noObjects').addEventListener('click', () => {
+            noObjects = true;
+            labels.push({
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                class: 'no_objects'
+            });
+            const imageIdx = img.dataset.imageIdx;
+            const originalImagePath = img.dataset.original_image_path;
+
+            fetch('/save_hotspot', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    image_idx: imageIdx,
+                    original_image_path: originalImagePath,
+                    labels: labels
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('loadImage').click(); // Cargar la siguiente imagen
+                }
+            });
+        });
+    </script>
+</body>
+</html>
